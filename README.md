@@ -17,7 +17,7 @@ AI-powered university course scheduling system with conflict detection and resol
 ## Tech Stack
 
 - **Frontend:** Next.js, React, TypeScript, Tailwind CSS
-- **Backend:** Supabase (PostgreSQL)
+- **Backend:** Supabase (PostgreSQL), Next.js
 - **AI:** Groq API for schedule generation
 - **Authentication:** Supabase Auth
 
