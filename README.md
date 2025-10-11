@@ -49,7 +49,5 @@ AI-powered university course scheduling system with conflict detection and resol
 - **Admin/Committee:** Generate and manage schedules, view conflicts, resolve issues
 - **Student:** View personalized timetable, select electives, submit feedback
 
-## License
 
-MIT
 
