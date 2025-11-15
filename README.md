@@ -47,6 +47,7 @@ AI-powered university course scheduling system with conflict detection and resol
 ## User Roles
 
 - **Admin/Committee:** Generate and manage schedules, view conflicts, resolve issues
+- **Faculty:** View personalized timetable, submit feedback
 - **Student:** View personalized timetable, select electives, submit feedback
 
 ## License
