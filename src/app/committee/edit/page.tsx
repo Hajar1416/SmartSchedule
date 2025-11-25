@@ -1,6 +1,12 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+
+
+import { CollaborationIndicator, CollaborationParticipant } from '@/components/ui/CollaborationIndicator'
+import { useCollaborationParticipantsForSchedule } from '@/hooks/useCollaborationParticipantsForSchedule'
+
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -71,6 +77,14 @@ export default function EditSchedulePage() {
   const [deleting, setDeleting] = useState(false)
   const [currentSemester, setCurrentSemester] = useState<string>('')
   const [comparingVersions, setComparingVersions] = useState<{ v1: string; v2: string } | null>(null)
+
+
+ const { participants } = useCollaborationParticipantsForSchedule(
+    selectedSchedule?.id || null,
+    user?.id || null
+  )
+
+
 
   // Check if user is teaching_load_committee (read-only access)
   const isReadOnly = userRole === 'teaching_load_committee'
@@ -345,412 +359,507 @@ export default function EditSchedulePage() {
     return conflicts
   }
 
-  const conflicts = getConflicts()
+   const conflicts = getConflicts()
+
+   // Real-time subscription for the selected schedule version
+useEffect(() => {
+  // No schedule selected → no subscription
+  if (!selectedSchedule?.id) return
+
+  const versionId = selectedSchedule.id
+
+  const channel = supabase
+    .channel(`schedule-version-${versionId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'schedule_versions',            // 👈 change to your real table name
+        filter: `id=eq.${versionId}`,          // only listen to this version
+      },
+      async (payload) => {
+        try {
+          console.log('Realtime update for schedule version', payload)
+
+          // Reload the updated schedule version from your existing service
+          const latest = await ScheduleService.getScheduleById(versionId)
+
+          if (latest) {
+            setSelectedSchedule(latest)
+            setSections(
+              latest.sections.map((section: any, index: number) => ({
+                ...section,
+                id: `section-${versionId}-${index}-${Date.now()}`, // keep UI-only ID
+              }))
+            )
+          }
+        } catch (err) {
+          console.error('Error handling realtime schedule update:', err)
+        }
+      }
+    )
+    .subscribe()
+
+  // Cleanup
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}, [selectedSchedule?.id])
+
 
   if (loading) {
     return (
-        <div className="p-6 flex items-center justify-center min-h-96">
-          <div className="text-center">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-            <p>Loading schedules...</p>
-          </div>
+      <div className="p-6 flex items-center justify-center min-h-96">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p>Loading schedules...</p>
         </div>
+      </div>
     )
   }
 
   return (
-      <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {isReadOnly ? 'View Schedules' : 'Edit Schedule'}
-            </h1>
-            <div className="flex items-center space-x-2">
-              <p className="text-gray-600">
-                {isReadOnly ? 'View and review existing schedules' : 'Modify and manage existing schedules'}
-              </p>
-              
-            </div>
-          </div>
+    <div className="p-6 space-y-6">
+      {/* Top header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">
+            {isReadOnly ? 'View Schedules' : 'Edit Schedule'}
+          </h1>
           <div className="flex items-center space-x-2">
-            <Button variant="outline" onClick={loadSchedules}>
-              <RotateCcw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
-            {!isReadOnly && (
-              <>
-                <Button onClick={handleSaveSchedule} disabled={saving}>
-                  {saving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  Save Changes
-                </Button>
-                {selectedSchedule && (
-                  <Button 
-                    variant="destructive" 
-                    onClick={() => setIsDeleteDialogOpen(true)}
-                    disabled={saving || deleting}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete Schedule
-                  </Button>
-                )}
-              </>
-            )}
+            <p className="text-gray-600">
+              {isReadOnly
+                ? 'View and review existing schedules'
+                : 'Modify and manage existing schedules'}
+            </p>
           </div>
         </div>
 
-        {/* Schedule Selection */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{isReadOnly ? 'Select Schedule to View' : 'Select Schedule to Edit'}</CardTitle>
-            <CardDescription>{isReadOnly ? 'Choose a schedule to view' : 'Choose a schedule to modify'}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center space-x-4">
-              <Select value={selectedSchedule?.id || ''} onValueChange={handleScheduleSelect}>
-                <SelectTrigger className="w-64">
-                  <SelectValue placeholder="Select a schedule" />
-                </SelectTrigger>
-                <SelectContent>
-                  {schedules.map((schedule) => (
-                    <SelectItem key={schedule.id} value={schedule.id}>
-                      Level {schedule.level} - {schedule.semester} - {schedule.status.toUpperCase()}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <div className="flex items-center space-x-3">
+        <CollaborationIndicator participants={participants} />
+
+          <Button variant="outline" onClick={loadSchedules}>
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+
+          {!isReadOnly && (
+            <>
+              <Button onClick={handleSaveSchedule} disabled={saving}>
+                {saving ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                Save Changes
+              </Button>
+
               {selectedSchedule && (
-                <div className="flex items-center space-x-2">
-                  <Badge variant="secondary">
-                    {selectedSchedule.sections.length} Sections
-                  </Badge>
-                  <Badge variant="outline">
-                    {selectedSchedule.conflicts} Conflicts
-                  </Badge>
-                  <Badge 
-                    variant={selectedSchedule.status === 'approved' ? 'default' : 'secondary'}
-                    className={selectedSchedule.status === 'approved' ? 'bg-green-500' : ''}
-                  >
-                    {selectedSchedule.status.toUpperCase()}
-                  </Badge>
-                </div>
+                <Button
+                  variant="destructive"
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  disabled={saving || deleting}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Schedule
+                </Button>
               )}
-              {selectedSchedule && currentSemester && (
-                <VersionSelector
-                  level={selectedSchedule.level}
-                  semester={currentSemester}
-                  value={selectedVersionId || selectedSchedule.id}
-                  onValueChange={async (versionId) => {
-                    setSelectedVersionId(versionId)
-                    const versionSchedule = await ScheduleService.getScheduleById(versionId)
-                    if (versionSchedule) {
-                      setSelectedSchedule(versionSchedule)
-                      setSections(versionSchedule.sections.map((section, index) => ({
-                        ...(section as any),
-                        id: `section-${versionId}-${index}-${Date.now()}`
-                      })))
-                    }
-                  }}
-                />
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            </>
+          )}
+        </div>
+      </div>
 
-        {/* Error/Success Messages */}
-        {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+      {/* Schedule Selection */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            {isReadOnly ? 'Select Schedule to View' : 'Select Schedule to Edit'}
+          </CardTitle>
+          <CardDescription>
+            {isReadOnly ? 'Choose a schedule to view' : 'Choose a schedule to modify'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center space-x-4">
+            <Select value={selectedSchedule?.id || ''} onValueChange={handleScheduleSelect}>
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="Select a schedule" />
+              </SelectTrigger>
+              <SelectContent>
+                {schedules.map((schedule) => (
+                  <SelectItem key={schedule.id} value={schedule.id}>
+                    Level {schedule.level} - {schedule.semester} - {schedule.status.toUpperCase()}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-        {success && (
-          <Alert>
-            <CheckCircle className="h-4 w-4" />
-            <AlertDescription>{success}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* Conflicts */}
-        {conflicts.length > 0 && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              <div>
-                <p className="font-medium">Scheduling Conflicts Detected:</p>
-                <ul className="list-disc list-inside mt-1">
-                  {conflicts.map((conflict, index) => (
-                    <li key={index}>{conflict}</li>
-                  ))}
-                </ul>
+            {selectedSchedule && (
+              <div className="flex items-center space-x-2">
+                <Badge variant="secondary">
+                  {selectedSchedule.sections.length} Sections
+                </Badge>
+                <Badge variant="outline">
+                  {selectedSchedule.conflicts} Conflicts
+                </Badge>
+                <Badge
+                  variant={selectedSchedule.status === 'approved' ? 'default' : 'secondary'}
+                  className={selectedSchedule.status === 'approved' ? 'bg-green-500' : ''}
+                >
+                  {selectedSchedule.status.toUpperCase()}
+                </Badge>
               </div>
-            </AlertDescription>
-          </Alert>
-        )}
+            )}
 
-        {/* Grid Layout: Schedule (2/3) + Comments (1/3) */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Schedule Column */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Version History Panel */}
             {selectedSchedule && currentSemester && (
-              <VersionHistoryPanel
-                level={selectedSchedule.level}
+              <VersionSelector
+                level={selectedSchedule!.level}
                 semester={currentSemester}
-                onVersionSelect={async (versionId) => {
+                value={selectedVersionId || selectedSchedule!.id}
+                onValueChange={async (versionId) => {
                   setSelectedVersionId(versionId)
                   const versionSchedule = await ScheduleService.getScheduleById(versionId)
                   if (versionSchedule) {
                     setSelectedSchedule(versionSchedule)
-                    setSections(versionSchedule.sections.map((section, index) => ({
-                      ...(section as any),
-                      id: `section-${versionId}-${index}-${Date.now()}`
-                    })))
+                    setSections(
+                      versionSchedule.sections.map((section, index) => ({
+                        ...(section as any),
+                        id: `section-${versionId}-${index}-${Date.now()}`
+                      }))
+                    )
                   }
                 }}
-                onCompare={(v1, v2) => setComparingVersions({ v1, v2 })}
               />
             )}
+          </div>
+        </CardContent>
+      </Card>
 
-            {/* Schedule Grid */}
-            {selectedSchedule && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Schedule Grid</CardTitle>
-              <CardDescription>
-                Click on a section to edit, or drag to move
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr>
-                      <th className="border p-2 bg-gray-50 font-medium">Time</th>
-                      {DAYS.map(day => (
-                        <th key={day} className="border p-2 bg-gray-50 font-medium min-w-32">
-                          {day}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...new Set(sections.map(s => s.timeslot.start))].sort().map(time => (
-                      <tr key={time}>
-                        <td className="border p-2 bg-gray-50 font-medium">{time}</td>
-                        {DAYS.map(day => {
-                          const atCell = getSectionsAtTime(day, time)
-                          return (
-                            <td key={`${day}-${time}`} className="border p-1 min-h-16">
-                              {atCell.length > 0 ? (
-                                <div className="space-y-2">
-                                  {atCell.map((section, idx) => (
-                                    <div 
-                                      key={section.id || `${day}-${time}-${idx}`}
-                                      className={`bg-blue-100 border border-blue-300 rounded p-2 transition-colors ${
-                                        isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-blue-200'
-                                      }`}
-                                      onClick={() => !isReadOnly && handleEditSection(section)}
-                                    >
-                                      <div className="font-medium text-sm">{section.course_code} {section.group_name ? `(${section.group_name})` : ''}</div>
-                                      {/* section label removed per request */}
-                                      <div className="text-xs text-gray-600">{section.room}</div>
-                                      <div className="text-xs text-gray-600">{section.student_count}/{section.capacity}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="h-16 border-2 border-dashed border-gray-200 rounded flex items-center justify-center">
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="text-gray-400 hover:text-gray-600"
-                                  >
-                                    <Plus className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              )}
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+      {/* Error/Success Messages */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
-        {/* Section List */}
-        {selectedSchedule && (
-          <Card>
-            <CardHeader>
-              <CardTitle>All Sections</CardTitle>
-              <CardDescription>Manage all sections in this schedule</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {sections.map((section, index) => (
-                  <div key={section.id || `section-${index}`} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center space-x-4">
-                      <div>
-                        <div className="font-medium">{section.course_code}</div>
-                        <div className="text-sm text-gray-600">
-                          {section.timeslot.day} {section.timeslot.start}-{section.timeslot.end} • {section.room}
-                        </div>
-                      </div>
-                      <Badge variant="secondary">
-                        {section.student_count}/{section.capacity} students
-                      </Badge>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      {!isReadOnly && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleEditSection(section)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-red-600 hover:text-red-700"
-                            onClick={() => handleDeleteSection(section.id || `section-${sections.indexOf(section)}`)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
+      {success && (
+        <Alert>
+          <CheckCircle className="h-4 w-4" />
+          <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Conflicts */}
+      {conflicts.length > 0 && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            <div>
+              <p className="font-medium">Scheduling Conflicts Detected:</p>
+              <ul className="list-disc list-inside mt-1">
+                {conflicts.map((conflict, index) => (
+                  <li key={index}>{conflict}</li>
                 ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-          </div>
-
-          {/* Comments Panel Column */}
-          <div className="lg:col-span-1">
-            <div className="sticky top-6 space-y-6">
-              {selectedSchedule?.id ? (
-                <ScheduleCommentsPanel scheduleVersionId={selectedSchedule.id} />
-              ) : (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <MessageSquare className="h-5 w-5 text-blue-600" />
-                      Comments & Feedback
-                    </CardTitle>
-                    <CardDescription>
-                      Select a schedule to view comments
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="text-center py-8">
-                    <MessageSquare className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-                    <p className="text-gray-600 text-sm">
-                      No schedule selected
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
+              </ul>
             </div>
-          </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Grid Layout: Schedule (2/3) + Comments (1/3) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Schedule Column */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Version History Panel */}
+          {selectedSchedule && currentSemester && (
+            <VersionHistoryPanel
+              level={selectedSchedule!.level}
+              semester={currentSemester}
+              onVersionSelect={async (versionId) => {
+                setSelectedVersionId(versionId)
+                const versionSchedule = await ScheduleService.getScheduleById(versionId)
+                if (versionSchedule) {
+                  setSelectedSchedule(versionSchedule)
+                  setSections(
+                    versionSchedule.sections.map((section, index) => ({
+                      ...(section as any),
+                      id: `section-${versionId}-${index}-${Date.now()}`
+                    }))
+                  )
+                }
+              }}
+              onCompare={(v1, v2) => setComparingVersions({ v1, v2 })}
+            />
+          )}
+
+          {/* Schedule Grid */}
+          {selectedSchedule && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Schedule Grid</CardTitle>
+                <CardDescription>
+                  Click on a section to edit, or drag to move
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border p-2 bg-gray-50 font-medium">Time</th>
+                        {DAYS.map((day) => (
+                          <th
+                            key={day}
+                            className="border p-2 bg-gray-50 font-medium min-w-32"
+                          >
+                            {day}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...new Set(sections.map((s) => s.timeslot.start))]
+                        .sort()
+                        .map((time) => (
+                          <tr key={time}>
+                            <td className="border p-2 bg-gray-50 font-medium">{time}</td>
+                            {DAYS.map((day) => {
+                              const atCell = getSectionsAtTime(day, time)
+                              return (
+                                <td
+                                  key={`${day}-${time}`}
+                                  className="border p-1 min-h-16"
+                                >
+                                  {atCell.length > 0 ? (
+                                    <div className="space-y-2">
+                                      {atCell.map((section, idx) => (
+                                        <div
+                                          key={section.id || `${day}-${time}-${idx}`}
+                                          className={`bg-blue-100 border border-blue-300 rounded p-2 transition-colors ${
+                                            isReadOnly
+                                              ? 'cursor-default'
+                                              : 'cursor-pointer hover:bg-blue-200'
+                                          }`}
+                                          onClick={() =>
+                                            !isReadOnly && handleEditSection(section)
+                                          }
+                                        >
+                                          <div className="font-medium text-sm">
+                                            {section.course_code}{' '}
+                                            {section.group_name
+                                              ? `(${section.group_name})`
+                                              : ''}
+                                          </div>
+                                          <div className="text-xs text-gray-600">
+                                            {section.room}
+                                          </div>
+                                          <div className="text-xs text-gray-600">
+                                            {section.student_count}/{section.capacity}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="h-16 border-2 border-dashed border-gray-200 rounded flex items-center justify-center">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="text-gray-400 hover:text-gray-600"
+                                      >
+                                        <Plus className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Section List */}
+          {selectedSchedule && (
+            <Card>
+              <CardHeader>
+                <CardTitle>All Sections</CardTitle>
+                <CardDescription>
+                  Manage all sections in this schedule
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {sections.map((section, index) => (
+                    <div
+                      key={section.id || `section-${index}`}
+                      className="flex items-center justify-between p-3 border rounded-lg"
+                    >
+                      <div className="flex items-center space-x-4">
+                        <div>
+                          <div className="font-medium">{section.course_code}</div>
+                          <div className="text-sm text-gray-600">
+                            {section.timeslot.day} {section.timeslot.start}-
+                            {section.timeslot.end} • {section.room}
+                          </div>
+                        </div>
+                        <Badge variant="secondary">
+                          {section.student_count}/{section.capacity} students
+                        </Badge>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {!isReadOnly && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEditSection(section)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() =>
+                                handleDeleteSection(
+                                  section.id || `section-${sections.indexOf(section)}`
+                                )
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
-      {/* {/* Version Comparison Dialog 
-        {comparingVersions && (
-          <Dialog open={!!comparingVersions} onOpenChange={() => setComparingVersions(null)}>
-            <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Version Comparison</DialogTitle>
-                <DialogDescription>Compare two schedule versions side by side</DialogDescription>
-              </DialogHeader>
-              <VersionComparisonView
-                version1Id={comparingVersions.v1}
-                version2Id={comparingVersions.v2}
-                onClose={() => setComparingVersions(null)}
-              />
-            </DialogContent>
-          </Dialog>
-        )}
-          */}
-
-        {/* Edit Section Dialog */}
-        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Edit Section</DialogTitle>
-              <DialogDescription>Modify section details</DialogDescription>
-            </DialogHeader>
-            {editingSection && (
-              <EditSectionForm
-                section={editingSection}
-                availableRooms={availableRooms}
-                startTimeOptions={startTimeOptions}
-                endTimeOptions={endTimeOptions}
-                onSave={handleSaveSection}
-                onCancel={() => setIsEditDialogOpen(false)}
-              />
+        {/* Comments Panel Column */}
+        <div className="lg:col-span-1">
+          <div className="sticky top-6 space-y-6">
+            {selectedSchedule?.id ? (
+              <ScheduleCommentsPanel scheduleVersionId={selectedSchedule.id} />
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MessageSquare className="h-5 w-5 text-blue-600" />
+                    Comments &amp; Feedback
+                  </CardTitle>
+                  <CardDescription>
+                    Select a schedule to view comments
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="text-center py-8">
+                  <MessageSquare className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                  <p className="text-gray-600 text-sm">No schedule selected</p>
+                </CardContent>
+              </Card>
             )}
-          </DialogContent>
-        </Dialog>
+          </div>
+        </div>
+      </div>
 
-        {/* Delete Schedule Confirmation Dialog */}
-        <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-          <DialogContent>
+      {/* Version Comparison Dialog */}
+      {comparingVersions && (
+        <Dialog open={!!comparingVersions} onOpenChange={() => setComparingVersions(null)}>
+          <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Delete Schedule</DialogTitle>
+              <DialogTitle>Version Comparison</DialogTitle>
               <DialogDescription>
-                Are you sure you want to delete this schedule? This action cannot be undone.
+                Compare two schedule versions side by side
               </DialogDescription>
             </DialogHeader>
-            <div className="py-4">
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <div className="flex items-center">
-                  <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
-                  <div>
-                    <h4 className="font-medium text-red-800">Warning</h4>
-                    <p className="text-sm text-red-700 mt-1">
-                      This will permanently delete the schedule for Level {selectedSchedule?.level} - {selectedSchedule?.semester}
-                    </p>
-                  </div>
+            <VersionComparisonView
+              version1Id={comparingVersions.v1}
+              version2Id={comparingVersions.v2}
+              onClose={() => setComparingVersions(null)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Edit Section Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Section</DialogTitle>
+            <DialogDescription>Modify section details</DialogDescription>
+          </DialogHeader>
+          {editingSection && (
+            <EditSectionForm
+              section={editingSection}
+              availableRooms={availableRooms}
+              startTimeOptions={startTimeOptions}
+              endTimeOptions={endTimeOptions}
+              onSave={handleSaveSection}
+              onCancel={() => setIsEditDialogOpen(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Schedule Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Schedule</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this schedule? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center">
+                <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
+                <div>
+                  <h4 className="font-medium text-red-800">Warning</h4>
+                  <p className="text-sm text-red-700 mt-1">
+                    This will permanently delete the schedule for Level{' '}
+                    {selectedSchedule?.level} - {selectedSchedule?.semester}
+                  </p>
                 </div>
               </div>
             </div>
-            <div className="flex justify-end space-x-2">
-              <Button 
-                variant="outline" 
-                onClick={() => setIsDeleteDialogOpen(false)}
-                disabled={deleting}
-              >
-                Cancel
-              </Button>
-              <Button 
-                variant="destructive" 
-                onClick={handleDeleteSchedule}
-                disabled={deleting}
-              >
-                {deleting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4 mr-2" />
-                )}
-                {deleting ? 'Deleting...' : 'Delete Schedule'}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+          </div>
+          <div className="flex justify-end space-x-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteSchedule}
+              disabled={deleting}
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              {deleting ? 'Deleting...' : 'Delete Schedule'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
+
 
 interface EditSectionFormProps {
   section: ScheduleSection
